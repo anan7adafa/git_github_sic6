@@ -3,6 +3,7 @@ import time
 import dht
 import network
 import ujson
+import urequests
 from umqtt.simple import MQTTClient
 
 # Konfigurasi WiFi
@@ -26,18 +27,24 @@ MQTTX_PORT = 1883
 MQTTX_TOPIC_PUB = "iot/dht11"
 MQTTX_TOPIC_CONTROL = "iot/control"
 
+# Konfigurasi API Flask
+# Sesuaikan dengan alamat server Flask
+API_URL = "http://192.168.1.100:5000"
+
 # Inisialisasi perangkat
 led_red = machine.Pin(13, machine.Pin.OUT)
 led_green = machine.Pin(12, machine.Pin.OUT)
 dht_sensor = dht.DHT11(machine.Pin(26))
 pir_sensor = machine.Pin(27, machine.Pin.IN)  # Pin untuk sensor PIR
 
+motion = False
+
 # Fungsi untuk koneksi WiFi
 def connect_wifi():
     wifi = network.WLAN(network.STA_IF)
     wifi.active(True)
     wifi.connect(WIFI_SSID, WIFI_PASSWORD)
-    
+
     print("Menghubungkan ke WiFi...")
     while not wifi.isconnected():
         time.sleep(1)
@@ -82,31 +89,48 @@ def publish_data():
     dht_sensor.measure()
     temperature = dht_sensor.temperature()
     humidity = dht_sensor.humidity()
-    pir_status = pir_sensor.value()  # Membaca status PIR (1 = terdeteksi, 0 = tidak terdeteksi)
-    
+
     data_ubidots = ujson.dumps({
         "temperature": temperature,
         "humidity": humidity,
-        "PIR": pir_status  # Menambahkan status PIR
+        "motion": motion
     })
-    
+
     data_mqttx = ujson.dumps({
         "temp": temperature,
-        "humid": humidity
+        "humid": humidity,
+        "motion": motion
     })
+
+    data_api = {"temperature": temperature, "humidity": humidity}
 
     print("Mengirim data ke Ubidots:", data_ubidots)
     mqtt_ubidots.publish(UBIDOTS_TOPIC_PUB, data_ubidots)
-    mqtt_ubidots.publish(UBIDOTS_TOPIC_PUB_PIR, str(pir_status))  # Mengirim status PIR secara terpisah
 
     print("Mengirim data ke MQTTX:", data_mqttx)
-    mqtt_mqttx.publish(MQTTX_TOPIC_PUB, data_mqttx) 
+    mqtt_mqttx.publish(MQTTX_TOPIC_PUB, data_mqttx)
+
+    try:
+        print("Mengirim data ke API Flask:", data_api)
+        response = urequests.post(API_URL + "/dht11/store", json=data_api)
+        print("Respon API:", response.text)
+        response.close()
+    except Exception as e:
+        print("Gagal mengirim data ke API Flask:", str(e))
+
+
+# Fungsi callback saat sensor PIR terdeteksi gerakan
+def update_motion_status(pin):
+    global motion
+    motion = True
+
 
 # Koneksi WiFi
 connect_wifi()
 
 # Koneksi ke MQTT Ubidots
-mqtt_ubidots = MQTTClient(UBIDOTS_CLIENT_ID, UBIDOTS_BROKER, port=UBIDOTS_PORT, user=UBIDOTS_TOKEN, password="", keepalive=60)
+mqtt_ubidots = MQTTClient(UBIDOTS_CLIENT_ID, UBIDOTS_BROKER,
+                          port=UBIDOTS_PORT, user=UBIDOTS_TOKEN, password="", keepalive=60)
 mqtt_ubidots.set_callback(on_message)
 mqtt_ubidots.connect()
 mqtt_ubidots.subscribe(UBIDOTS_TOPIC_SUB_RED)
@@ -114,11 +138,14 @@ mqtt_ubidots.subscribe(UBIDOTS_TOPIC_SUB_GREEN)
 print("Terhubung ke Ubidots MQTT!")
 
 # Koneksi ke MQTTX
-mqtt_mqttx = MQTTClient(MQTTX_CLIENT_ID, MQTTX_BROKER, port=MQTTX_PORT, keepalive=60)
+mqtt_mqttx = MQTTClient(MQTTX_CLIENT_ID, MQTTX_BROKER,
+                        port=MQTTX_PORT, keepalive=60)
 mqtt_mqttx.set_callback(on_message)
 mqtt_mqttx.connect()
 mqtt_mqttx.subscribe(MQTTX_TOPIC_CONTROL)
 print("Terhubung ke MQTTX!")
+
+pir_sensor.irq(trigger=machine.Pin.IRQ_RISING, handler=update_motion_status)
 
 # Loop utama
 while True:
@@ -126,4 +153,4 @@ while True:
     mqtt_mqttx.check_msg()
     publish_data()  # Kirim data sensor ke Ubidots & MQTTX
     time.sleep(5)
-
+    motion = False
