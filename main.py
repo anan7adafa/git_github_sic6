@@ -1,39 +1,126 @@
 import machine
 import time
 import dht
+import network
+import ujson
+from umqtt.simple import MQTTClient
 
-led_green = machine.Pin(12, machine.Pin.OUT)
+# Konfigurasi WiFi
+WIFI_SSID = "Kost ema eksklusif"
+WIFI_PASSWORD = "gejayan251124"
+
+# Konfigurasi MQTT Ubidots
+UBIDOTS_TOKEN = "BBUS-4pUpT4sQBMvJp5af2jgMydwHOm0OzH"  # Ganti dengan Token API Ubidots
+UBIDOTS_BROKER = "industrial.api.ubidots.com"
+UBIDOTS_CLIENT_ID = "ESP32_Ubidots"
+UBIDOTS_PORT = 1883
+UBIDOTS_TOPIC_PUB = "/v1.6/devices/esp32_dht11"
+UBIDOTS_TOPIC_SUB_RED = "/v1.6/devices/esp32_dht11/led_red/lv"
+UBIDOTS_TOPIC_SUB_GREEN = "/v1.6/devices/esp32_dht11/led_green/lv"
+
+# Konfigurasi MQTTX (Broker EMQX)
+MQTTX_BROKER = "broker.emqx.io"
+MQTTX_CLIENT_ID = "ESP32_MQTTX"
+MQTTX_PORT = 1883
+MQTTX_TOPIC_PUB = "iot/dht11"
+MQTTX_TOPIC_CONTROL = "iot/control"  # Menggunakan satu topik untuk kontrol LED
+
+# Inisialisasi perangkat
 led_red = machine.Pin(13, machine.Pin.OUT)
+led_green = machine.Pin(12, machine.Pin.OUT)
+dht_sensor = dht.DHT11(machine.Pin(26))
 
-d = dht.DHT11(machine.Pin(26))
+# Fungsi untuk koneksi WiFi
+def connect_wifi():
+    wifi = network.WLAN(network.STA_IF)
+    wifi.active(True)
+    wifi.connect(WIFI_SSID, WIFI_PASSWORD)
+    
+    print("Menghubungkan ke WiFi...")
+    while not wifi.isconnected():
+        time.sleep(1)
+    print("WiFi Terhubung:", wifi.ifconfig())
 
-def display_dht11():
-    d.measure()
-    temp = d.temperature()
-    humid = d.humidity()
-    print('Temperature	:', temp, '*C', '\nHumidity	:', humid, '%')
-    return temp
+# Fungsi callback saat menerima data dari MQTT
+# Fungsi callback saat menerima data dari MQTT
+def on_message(topic, message):
+    topic = topic.decode()  # Ubah bytes ke string
+    message = message.decode()  # Ubah bytes ke string
+    print("Pesan diterima:", topic, message)
 
-def display_led(temp):
-    temp_max = 34
-    if temp >= temp_max:
-        led_red.on()
-        led_green.off()
-    elif temp < temp_max:
-        led_red.off()
-        led_green.on()
-    else:
-        led_red.off()
-        led_green.off()
-        
+    # Jika pesan dari MQTTX (EMQX)
+    if topic == MQTTX_TOPIC_CONTROL:  # Tidak perlu .encode()
+        if message == "red_on":
+            led_red.value(1)
+        elif message == "red_off":
+            led_red.value(0)
+        elif message == "green_on":
+            led_green.value(1)
+        elif message == "green_off":
+            led_green.value(0)
 
-interval = 2000
-start = time.ticks_ms()
+    # Jika pesan dari Ubidots
+    if topic == UBIDOTS_TOPIC_SUB_RED:
+        try:
+            if float(message) == 1.0:  # Konversi ke float sebelum dibandingkan
+                led_red.value(1)
+            elif float(message) == 0.0:
+                led_red.value(0)
+        except ValueError:
+            print("Error: Format pesan tidak valid untuk LED merah.")
 
+    if topic == UBIDOTS_TOPIC_SUB_GREEN:
+        try:
+            if float(message) == 1.0:
+                led_green.value(1)
+            elif float(message) == 0.0:
+                led_green.value(0)
+        except ValueError:
+            print("Error: Format pesan tidak valid untuk LED hijau.")
+
+# Fungsi untuk mengirim data ke Ubidots & MQTTX
+def publish_data():
+    dht_sensor.measure()
+    temperature = dht_sensor.temperature()
+    humidity = dht_sensor.humidity()
+    
+    data_ubidots = ujson.dumps({
+        "temperature": temperature,
+        "humidity": humidity
+    })
+    
+    data_mqttx = ujson.dumps({
+        "temp": temperature,
+        "humid": humidity
+    })
+
+    print("Mengirim data ke Ubidots:", data_ubidots)
+    mqtt_ubidots.publish(UBIDOTS_TOPIC_PUB, data_ubidots)
+
+    print("Mengirim data ke MQTTX:", data_mqttx)
+    mqtt_mqttx.publish(MQTTX_TOPIC_PUB, data_mqttx)
+
+# Koneksi WiFi
+connect_wifi()
+
+# Koneksi ke MQTT Ubidots
+mqtt_ubidots = MQTTClient(UBIDOTS_CLIENT_ID, UBIDOTS_BROKER, port=UBIDOTS_PORT, user=UBIDOTS_TOKEN, password="", keepalive=60)
+mqtt_ubidots.set_callback(on_message)
+mqtt_ubidots.connect()
+mqtt_ubidots.subscribe(UBIDOTS_TOPIC_SUB_RED)
+mqtt_ubidots.subscribe(UBIDOTS_TOPIC_SUB_GREEN)
+print("Terhubung ke Ubidots MQTT!")
+
+# Koneksi ke MQTTX
+mqtt_mqttx = MQTTClient(MQTTX_CLIENT_ID, MQTTX_BROKER, port=MQTTX_PORT, keepalive=60)
+mqtt_mqttx.set_callback(on_message)
+mqtt_mqttx.connect()
+mqtt_mqttx.subscribe(MQTTX_TOPIC_CONTROL)
+print("Terhubung ke MQTTX!")
+
+# Loop utama
 while True:
-    if time.ticks_ms() - start >= interval:
-        temp = display_dht11()
-        display_led(temp)
-        start = time.ticks_ms()
-        print("LED Green	:", led_green.value())
-        print("LED Red		:", led_red.value(), '\n')
+    mqtt_ubidots.check_msg()  # Cek pesan masuk dari Ubidots
+    mqtt_mqttx.check_msg()  # Cek pesan masuk dari MQTTX
+    publish_data()  # Kirim data sensor ke Ubidots & MQTTX
+    time.sleep(5)  # Update setiap 5 detik
