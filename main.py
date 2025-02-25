@@ -18,7 +18,6 @@ UBIDOTS_PORT = 1883
 UBIDOTS_TOPIC_PUB = "/v1.6/devices/esp32_dht11"
 UBIDOTS_TOPIC_SUB_RED = "/v1.6/devices/esp32_dht11/led_red/lv"
 UBIDOTS_TOPIC_SUB_GREEN = "/v1.6/devices/esp32_dht11/led_green/lv"
-UBIDOTS_TOPIC_PUB_PIR = "/v1.6/devices/esp32_dht11/PIR"
 
 # Konfigurasi MQTTX (Broker EMQX)
 MQTTX_BROKER = "broker.emqx.io"
