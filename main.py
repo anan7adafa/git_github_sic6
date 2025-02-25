@@ -107,7 +107,7 @@ def publish_data():
     }
 
     data_pir_api = {
-        "motion": motion,
+        "motion_detected": motion,
     }
 
     print("Mengirim data ke Ubidots:", data_ubidots)
