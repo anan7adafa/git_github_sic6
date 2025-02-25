@@ -101,7 +101,14 @@ def publish_data():
         "motion": motion
     })
 
-    data_api = {"temperature": temperature, "humidity": humidity}
+    data_dht11_api = {
+        "temperature": temperature,
+        "humidity": humidity,
+    }
+
+    data_pir_api = {
+        "motion": motion,
+    }
 
     print("Mengirim data ke Ubidots:", data_ubidots)
     mqtt_ubidots.publish(UBIDOTS_TOPIC_PUB, data_ubidots)
@@ -110,9 +117,11 @@ def publish_data():
     mqtt_mqttx.publish(MQTTX_TOPIC_PUB, data_mqttx)
 
     try:
-        print("Mengirim data ke API Flask:", data_api)
-        response = urequests.post(API_URL + "/dht11/store", json=data_api)
+        print("Mengirim data DHT11 ke API Flask:", data_dht11_api)
+        response = urequests.post(API_URL + "/dht11/store", json=data_dht11_api)
         print("Respon API:", response.text)
+        print ("Mengirim data PIR ke API Flask:", data_pir_api)
+        response = urequests.post(API_URL + "/pir/store", json=data_pir_api)
         response.close()
     except Exception as e:
         print("Gagal mengirim data ke API Flask:", str(e))
