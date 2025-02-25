@@ -3,6 +3,7 @@ import time
 import dht
 import network
 import ujson
+import urequests
 from umqtt.simple import MQTTClient
 
 # Konfigurasi WiFi
@@ -10,7 +11,7 @@ WIFI_SSID = "Kost ema eksklusif"
 WIFI_PASSWORD = "gejayan251124"
 
 # Konfigurasi MQTT Ubidots
-UBIDOTS_TOKEN = "BBUS-4pUpT4sQBMvJp5af2jgMydwHOm0OzH"  # Ganti dengan Token API Ubidots
+UBIDOTS_TOKEN = "BBUS-4pUpT4sQBMvJp5af2jgMydwHOm0OzH"
 UBIDOTS_BROKER = "industrial.api.ubidots.com"
 UBIDOTS_CLIENT_ID = "ESP32_Ubidots"
 UBIDOTS_PORT = 1883
@@ -25,6 +26,9 @@ MQTTX_PORT = 1883
 MQTTX_TOPIC_PUB = "iot/dht11"
 MQTTX_TOPIC_CONTROL = "iot/control"  # Menggunakan satu topik untuk kontrol LED
 
+# Konfigurasi API Flask
+API_URL = "http://192.168.1.100:5000"  # Sesuaikan dengan alamat server Flask
+
 # Inisialisasi perangkat
 led_red = machine.Pin(13, machine.Pin.OUT)
 led_green = machine.Pin(12, machine.Pin.OUT)
@@ -35,13 +39,12 @@ def connect_wifi():
     wifi = network.WLAN(network.STA_IF)
     wifi.active(True)
     wifi.connect(WIFI_SSID, WIFI_PASSWORD)
-    
+
     print("Menghubungkan ke WiFi...")
     while not wifi.isconnected():
         time.sleep(1)
     print("WiFi Terhubung:", wifi.ifconfig())
 
-# Fungsi callback saat menerima data dari MQTT
 # Fungsi callback saat menerima data dari MQTT
 def on_message(topic, message):
     topic = topic.decode()  # Ubah bytes ke string
@@ -83,16 +86,18 @@ def publish_data():
     dht_sensor.measure()
     temperature = dht_sensor.temperature()
     humidity = dht_sensor.humidity()
-    
+
     data_ubidots = ujson.dumps({
         "temperature": temperature,
         "humidity": humidity
     })
-    
+
     data_mqttx = ujson.dumps({
         "temp": temperature,
         "humid": humidity
     })
+
+    data_api = {"temperature": temperature, "humidity": humidity}
 
     print("Mengirim data ke Ubidots:", data_ubidots)
     mqtt_ubidots.publish(UBIDOTS_TOPIC_PUB, data_ubidots)
@@ -100,11 +105,21 @@ def publish_data():
     print("Mengirim data ke MQTTX:", data_mqttx)
     mqtt_mqttx.publish(MQTTX_TOPIC_PUB, data_mqttx)
 
+    try:
+        print("Mengirim data ke API Flask:", data_api)
+        response = urequests.post(API_URL + "/dht11/store", json=data_api)
+        print("Respon API:", response.text)
+        response.close()
+    except Exception as e:
+        print("Gagal mengirim data ke API Flask:", str(e))
+
+
 # Koneksi WiFi
 connect_wifi()
 
 # Koneksi ke MQTT Ubidots
-mqtt_ubidots = MQTTClient(UBIDOTS_CLIENT_ID, UBIDOTS_BROKER, port=UBIDOTS_PORT, user=UBIDOTS_TOKEN, password="", keepalive=60)
+mqtt_ubidots = MQTTClient(UBIDOTS_CLIENT_ID, UBIDOTS_BROKER,
+                          port=UBIDOTS_PORT, user=UBIDOTS_TOKEN, password="", keepalive=60)
 mqtt_ubidots.set_callback(on_message)
 mqtt_ubidots.connect()
 mqtt_ubidots.subscribe(UBIDOTS_TOPIC_SUB_RED)
@@ -112,7 +127,8 @@ mqtt_ubidots.subscribe(UBIDOTS_TOPIC_SUB_GREEN)
 print("Terhubung ke Ubidots MQTT!")
 
 # Koneksi ke MQTTX
-mqtt_mqttx = MQTTClient(MQTTX_CLIENT_ID, MQTTX_BROKER, port=MQTTX_PORT, keepalive=60)
+mqtt_mqttx = MQTTClient(MQTTX_CLIENT_ID, MQTTX_BROKER,
+                        port=MQTTX_PORT, keepalive=60)
 mqtt_mqttx.set_callback(on_message)
 mqtt_mqttx.connect()
 mqtt_mqttx.subscribe(MQTTX_TOPIC_CONTROL)
